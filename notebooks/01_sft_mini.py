@@ -41,7 +41,9 @@ else:  # BIGGPU
     PER_DEVICE_BATCH = 2
     GRAD_ACCUM = 4
 
-SFT_DATASET = os.environ.get("SFT_DATASET", "5CD-AI/Vietnamese-alpaca-cleaned")
+SFT_DATASET = os.environ.get(
+    "SFT_DATASET", "5CD-AI/Vietnamese-alpaca-gpt4-gg-translated"
+)
 SFT_SLICE = 1000
 NUM_EPOCHS = 1
 
@@ -106,8 +108,9 @@ print(f"Trainable params: {sum(p.numel() for p in model.parameters() if p.requir
 # %% [markdown]
 # ## 2. Load + format VN Alpaca slice
 #
-# `5CD-AI/Vietnamese-alpaca-cleaned` is a 50k-row VN Alpaca translation. Lab 21
-# uses 1k slice for the demo run; we match that exactly so reward gap is comparable.
+# `5CD-AI/Vietnamese-alpaca-gpt4-gg-translated` is a 52k-row bilingual Alpaca
+# translation. We train on the Vietnamese fields (`instruction_vi`, `input_vi`,
+# `output_vi`) and use a 1k slice for the demo run.
 
 # %%
 from datasets import load_dataset
@@ -117,16 +120,21 @@ print(f"Loaded {len(ds)} rows. Columns: {ds.column_names}")
 print(f"\nFirst row:\n{ds[0]}")
 
 # %%
-# Alpaca → ChatML format (Qwen2.5's native template)
+# Vietnamese Alpaca → ChatML format (Qwen2.5's native template)
 def format_alpaca_to_chat(row):
-    messages = []
-    if row.get("instruction"):
-        prompt = row["instruction"]
-        if row.get("input"):
-            prompt += "\n\n" + row["input"]
-        messages.append({"role": "user", "content": prompt})
-    if row.get("output"):
-        messages.append({"role": "assistant", "content": row["output"]})
+    instruction = str(row.get("instruction_vi") or "").strip()
+    context = str(row.get("input_vi") or "").strip()
+    answer = str(row.get("output_vi") or "").strip()
+    if not instruction or not answer:
+        raise ValueError(
+            "SFT row must contain non-empty instruction_vi and output_vi fields"
+        )
+
+    prompt = instruction if not context else f"{instruction}\n\n{context}"
+    messages = [
+        {"role": "user", "content": prompt},
+        {"role": "assistant", "content": answer},
+    ]
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
     return {"text": text}
 

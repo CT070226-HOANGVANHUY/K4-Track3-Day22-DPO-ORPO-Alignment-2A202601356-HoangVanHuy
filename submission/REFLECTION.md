@@ -14,7 +14,7 @@
 | GPU | _<e.g., Free Colab T4 16GB / RTX 4060 8GB / A100 40GB>_ |
 | CUDA / driver | _<e.g., CUDA 12.1, driver 535>_ |
 | Base model | _<e.g., unsloth/Qwen2.5-3B-bnb-4bit>_ |
-| SFT dataset slice | _<e.g., 5CD-AI/Vietnamese-alpaca-cleaned · 1000 samples · 1 epoch>_ |
+| SFT dataset slice | _<e.g., 5CD-AI/Vietnamese-alpaca-gpt4-gg-translated · 1000 samples · 1 epoch>_ |
 | Preference dataset slice | _<e.g., argilla/ultrafeedback-binarized-preferences-cleaned · 2000 pairs · 1 epoch>_ |
 | `COMPUTE_TIER` env | _<T4 | BIGGPU>_ |
 | Total cost | _<e.g., $0 (free Colab) / $1.20 (Colab Pro A100 30 min)>_ |

@@ -38,6 +38,15 @@ def test_colab_notebooks_are_valid_json():
         json.loads(p.read_text(encoding="utf-8"))  # ValueError if corrupt
 
 
+def test_sft_uses_available_vietnamese_alpaca_dataset_and_columns():
+    notebook = (REPO / "notebooks/01_sft_mini.py").read_text(encoding="utf-8")
+    assert "5CD-AI/Vietnamese-alpaca-gpt4-gg-translated" in notebook
+    assert 'row.get("instruction_vi")' in notebook
+    assert 'row.get("input_vi")' in notebook
+    assert 'row.get("output_vi")' in notebook
+    assert "5CD-AI/Vietnamese-alpaca-cleaned" not in notebook
+
+
 def test_trainer_uses_processing_class_not_tokenizer():
     # TRL >= 0.13 removed the `tokenizer=` arg in favour of `processing_class=`.
     # With the requirements pin `trl>=0.12,<0.20` a fresh install resolves to
