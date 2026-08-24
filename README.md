@@ -24,9 +24,17 @@ Build SFT-mini checkpoint → train DPO adapter → compare SFT-only vs SFT+DPO 
 
 **Option 1: Free Colab (zero install)**
 
-[![Open T4 in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/<your-username>/Day22-Track3-DPO-Alignment-Lab/blob/main/colab/Lab22_DPO_T4.ipynb)
+[![Open T4 in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CT070226-HOANGVANHUY/K4-Track3-Day22-DPO-ORPO-Alignment-2A202601356-HoangVanHuy/blob/main/colab/Lab22_DPO_T4.ipynb)
 
-Click → Runtime → Change runtime type → **T4 GPU** → Run all.
+Trước khi chạy: push code mới nhất lên GitHub, tạo **key XAH mới** trong Colab
+Secrets với tên `XAH_API_KEY`, rồi Runtime → Change runtime type → **T4 GPU**.
+Notebook clone repo thật, chạy core → β-sweep → NB6 → NB5 và backup artifact
+sang `MyDrive/lab22-artifacts/` sau từng stage.
+Checklist thao tác và cách đưa artifact về repo: [`submission/COLAB-RUNBOOK.md`](submission/COLAB-RUNBOOK.md).
+
+> XAH là custom OpenAI-compatible gateway. Ghi đúng provider/model trong report;
+> không mô tả route `rouyea98/gpt-5.4` là model OpenAI chính thức. Key từng xuất
+> hiện trong ảnh hoặc output phải bị thu hồi, không tái sử dụng.
 
 **Option 2: Local laptop (≥ 12 GB VRAM)**
 
@@ -55,8 +63,9 @@ make pipeline        CORE: run NB1 → NB4 in order (~30 min T4)
 make deploy          NB5 (OPTIONAL) — merge + GGUF + llama.cpp smoke
 make bench           NB6 (OPTIONAL) — IFEval/GSM8K/MMLU + 4-bar plot (~30 min T4)
 make pipeline-full   Core + optional NB5 + NB6
-make beta-sweep      Bonus rigor: re-run NB3 with β ∈ {0.05, 0.1, 0.5}
+make beta-sweep      Train β 0.05/0.5, reuse core β 0.1, plot gap + win-rate
 make verify          scripts/verify.py — gatekeeper (core passes without NB5/NB6)
+make verify-full     Gatekeeper core + NB5 + NB6 + β-sweep + manual audits
 make clean           rm adapters/ data/pref/ gguf/ __pycache__
 ```
 
@@ -82,7 +91,7 @@ Hoặc Colab Pro / Kaggle: open `colab/Lab22_DPO_BigGPU.ipynb` (badge link sẽ 
 | `01_sft_mini` | Re-build Lab 21 SFT checkpoint inline (Unsloth + LoRA r=16, 1k VN Alpaca, 1 epoch) | Bullet 1 — base SFT artifact | adapter saves; loss decreases monotonically |
 | `02_preference_data` | Load `argilla/ultrafeedback-binarized-preferences-cleaned`, format `prompt/chosen/rejected`, save Parquet | Bullet 2 — preference data ready | parquet written; chosen ≠ rejected; 3 examples printed |
 | `03_dpo_train` | TRL `DPOTrainer(beta=0.1, lr=5e-7)` on SFT model + frozen reference; plot reward curves | Bullet 3 — DPO training + reward curves | adapter saves; reward gap > 0; chosen reward ↑ (or ↓ explained per deck §3.4) |
-| `04_compare_and_eval` | 8 fixed prompts × {SFT, SFT+DPO} side-by-side; optional GPT-4o/Claude judge | Bullet 4 — helpfulness comparison | table renders; ≥ 8 examples; win/loss/tie counts reported |
+| `04_compare_and_eval` | 8 fixed prompts × {SFT, SFT+DPO}; XAH custom judge + manual validation | Bullet 4 — helpfulness comparison | table renders; 8 manual verdicts + API/manual agreement reported |
 | `05_merge_deploy_gguf` **(OPTIONAL)** | `merge_and_unload()` → GGUF Q4_K_M → llama-cpp-python smoke test | Bullet 5 — deployable artifact | GGUF < 5 GB; smoke prompt returns coherent VN |
 | `06_benchmark` **(OPTIONAL)** | IFEval + GSM8K + MMLU (sampled) + AlpacaEval-lite on SFT-only vs SFT+DPO; 4-bar comparison plot | Bullet 6 — quantitative benchmark | `benchmark_results.json` written; 4 deltas annotated in plot; Reflection §7 explains alignment-tax pattern |
 
@@ -204,13 +213,14 @@ Full provocations: [`BONUS-CHALLENGE.md`](BONUS-CHALLENGE.md) (tiếng Việt) �
 ├── scripts/
 │   ├── prepare_preference_data.py  # CLI wrapper for NB2 logic
 │   ├── train_dpo.py                # CLI wrapper for NB3 logic
-│   ├── eval_judge.py               # OpenAI/Anthropic judge — falls back to manual
+│   ├── judge_client.py              # XAH/OpenAI-compatible retry + JSON validation
+│   ├── eval_judge.py                # β reward-gap + judge win-rate evaluation
 │   ├── merge_and_gguf.py           # CLI wrapper for NB5 logic
 │   └── verify.py                   # pre-submission gatekeeper
 ├── data/                           # gitignored; populated by NB2 / scripts
 ├── adapters/                       # gitignored; SFT + DPO outputs
 ├── submission/
-│   ├── REFLECTION.md               # personal report template (6 sections)
+│   ├── REFLECTION.md               # personal report template (7 sections)
 │   └── screenshots/                # add 6 required + 3 optional screenshots
 └── solutions/                      # released after submission deadline
     └── README.md
@@ -246,10 +256,12 @@ Full provocations: [`BONUS-CHALLENGE.md`](BONUS-CHALLENGE.md) (tiếng Việt) �
    git init -b main
    git remote add origin https://github.com/<your-username>/K4-Track3-Day22-DPO-ORPO-Alignment.git
    ```
-2. Hoàn thành 5 notebooks (giữ output cells trong `.ipynb`).
-3. Add ảnh chụp vào `submission/screenshots/` (xem [`submission/screenshots/README.md`](submission/screenshots/README.md) để biết list 6+3).
-4. Điền [`submission/REFLECTION.md`](submission/REFLECTION.md) (6 sections, ≥150 từ §3 + §6).
-5. `make verify` — pre-submission gatekeeper. Nếu fail, fix và rerun.
+2. Hoàn thành notebook Colab gộp NB1–NB6 và giữ nguyên output cells.
+3. Add đủ tám ảnh của lộ trình +20 vào `submission/screenshots/`.
+4. Điền [`submission/REFLECTION.md`](submission/REFLECTION.md), gồm phân tích
+   ≥150 từ ở §3, §6, §7 và ≥100 từ cho β-sweep ở §5.
+5. `make verify-full` — gatekeeper cho core + ba bonus. Nếu fail, fix và rerun.
+   `make verify` chỉ kiểm tra core.
 6. Push lên public repo:
    ```bash
    git add -A

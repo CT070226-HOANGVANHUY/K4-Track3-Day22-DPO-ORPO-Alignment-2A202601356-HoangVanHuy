@@ -155,10 +155,10 @@ torch.cuda.empty_cache()
 # %% [markdown]
 # ## 5. AlpacaEval-lite — Win-rate vs reference (judge-based)
 #
-# Mini AlpacaEval 2 LC. 100 prompts, generate from both adapters, judge with gpt-4o-mini or
-# claude-haiku. Pure preference-style — closest in spirit to what DPO trained on.
+# Mini AlpacaEval 2 LC. 100 prompts, generate from both adapters, and judge through the
+# configured provider. XAH is reported as a custom OpenAI-compatible judge.
 #
-# Falls back to "skipped" if no API key. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to enable.
+# Set `JUDGE_PROVIDER=xah` + `XAH_API_KEY`, or use official `OPENAI_API_KEY`.
 
 # %%
 from datasets import load_dataset
@@ -230,39 +230,44 @@ One-sentence justification.
 Output JSON: {{"winner": "A" | "B" | "tie", "reason": "..."}}"""
 
 
+import sys
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.judge_client import (  # noqa: E402
+    JudgeError,
+    build_client,
+    config_from_env,
+    request_judgment,
+    run_preflight,
+)
+
+judge_config = config_from_env()
+judge_client = build_client(judge_config) if judge_config else None
+if judge_config:
+    print(f"Judge: {judge_config.label} (secret not displayed)")
+    for check in run_preflight(judge_config, client=judge_client):
+        print(f"  preflight {check['case']}: OK")
+
+
 def judge_pair(a, b, prompt):
-    if os.environ.get("OPENAI_API_KEY"):
-        from openai import OpenAI
-        client = OpenAI()
-        resp = client.chat.completions.create(
-            model=os.environ.get("JUDGE_MODEL", "gpt-4o-mini"),
-            messages=[{"role": "user", "content": JUDGE_PROMPT.format(prompt=prompt, a=a, b=b)}],
-            temperature=0,
-            response_format={"type": "json_object"},
+    if not judge_config:
+        return None
+    try:
+        return request_judgment(
+            JUDGE_PROMPT.format(prompt=prompt, a=a, b=b),
+            config=judge_config,
+            client=judge_client,
         )
-        try:
-            return json.loads(resp.choices[0].message.content)
-        except Exception:
-            return {"winner": "tie", "reason": "parse error"}
-    elif os.environ.get("ANTHROPIC_API_KEY"):
-        from anthropic import Anthropic
-        client = Anthropic()
-        resp = client.messages.create(
-            model=os.environ.get("JUDGE_MODEL", "claude-haiku-4-5"),
-            max_tokens=200,
-            messages=[{"role": "user", "content": JUDGE_PROMPT.format(prompt=prompt, a=a, b=b)}],
-        )
-        try:
-            return json.loads(resp.content[0].text)
-        except Exception:
-            return {"winner": "tie", "reason": "parse error"}
-    return None
+    except JudgeError as exc:
+        return {"winner": None, "justification": "", "error": str(exc)}
 
 
 # %%
 import random
 
-if alpaca_prompts and (os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")):
+if alpaca_prompts and judge_config:
     print(f">>> Generating SFT-only on {len(alpaca_prompts)} AlpacaEval-lite prompts")
     sft_outputs = generate_with_adapter(SFT_PATH, alpaca_prompts)
     print(f">>> Generating SFT+DPO")
@@ -270,8 +275,9 @@ if alpaca_prompts and (os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHR
 
     print(f">>> Judging {len(alpaca_prompts)} pairs (random A/B order)")
     judgments = []
+    position_rng = random.Random(42)
     for p, sft_out, dpo_out in zip(alpaca_prompts, sft_outputs, dpo_outputs):
-        flip = random.random() < 0.5
+        flip = position_rng.random() < 0.5
         if flip:
             j = judge_pair(dpo_out, sft_out, p["prompt"])
             if j and j.get("winner") in ("A", "B"):
@@ -282,19 +288,65 @@ if alpaca_prompts and (os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHR
                 j["winner_model"] = "sft" if j["winner"] == "A" else "dpo"
         if j and j.get("winner") == "tie":
             j["winner_model"] = "tie"
-        judgments.append(j or {"winner_model": "skipped"})
+        judgment = j or {"winner_model": "skipped", "error": "judge unavailable"}
+        judgment.update({
+            "id": p["id"],
+            "prompt": p["prompt"],
+            "sft_output": sft_out,
+            "dpo_output": dpo_out,
+            "position_flipped": flip,
+            "api_provider": judge_config.provider,
+            "api_model": judge_config.model,
+        })
+        judgments.append(judgment)
 
-    n_dpo = sum(1 for j in judgments if j.get("winner_model") == "dpo")
-    n_tie = sum(1 for j in judgments if j.get("winner_model") == "tie")
-    n_total = len(judgments)
-    alpaca_winrate = (n_dpo + 0.5 * n_tie) / n_total if n_total else 0.0
-    print(f"\nDPO win-rate: {n_dpo}/{n_total} wins, {n_tie} ties → {alpaca_winrate:.3f}")
+    valid_judgments = [j for j in judgments if j.get("winner_model") in {"sft", "dpo", "tie"}]
+    n_dpo = sum(1 for j in valid_judgments if j["winner_model"] == "dpo")
+    n_tie = sum(1 for j in valid_judgments if j["winner_model"] == "tie")
+    n_total = len(valid_judgments)
+    alpaca_winrate = (n_dpo + 0.5 * n_tie) / n_total if n_total else None
+    error_count = len(judgments) - n_total
+    rate_text = "n/a" if alpaca_winrate is None else f"{alpaca_winrate:.3f}"
+    print(f"\nDPO win-rate: {n_dpo}/{n_total} valid, {n_tie} ties → {rate_text}; errors={error_count}")
+else:
+    print("⚠ No compatible judge key set, skipping AlpacaEval-lite.")
+    judgments = []
+    alpaca_winrate = None
+
+# %% [markdown]
+# ### 5a. Manual audit — edit and rerun this cell only
+#
+# Inspect the prompt and both generated responses for the 10 deterministic IDs,
+# replace every TODO, then rerun from this cell. Do not repeat the 100 API calls.
+
+# %%
+if judgments:
+    audit_rng = random.Random(42)
+    audit_ids = set(audit_rng.sample([p["id"] for p in alpaca_prompts], min(10, len(alpaca_prompts))))
+    MANUAL_AUDIT = {
+        audit_id: {"winner_manual": "TODO", "manual_reason": "TODO"}
+        for audit_id in sorted(audit_ids)
+    }
+    for judgment in judgments:
+        if judgment["id"] in MANUAL_AUDIT:
+            judgment.update(MANUAL_AUDIT[judgment["id"]])
+            manual = judgment["winner_manual"]
+            judgment["api_manual_agreement"] = (
+                judgment.get("winner_model") == manual
+                if manual in {"sft", "dpo", "tie"}
+                else None
+            )
+
+    reviewed = [j for j in judgments if j.get("api_manual_agreement") is not None]
+    if reviewed:
+        agreement = sum(j["api_manual_agreement"] for j in reviewed) / len(reviewed)
+        print(f"Manual audit agreement: {agreement:.1%} ({len(reviewed)}/10 reviewed)")
+    else:
+        print(f"MANUAL AUDIT REQUIRED for IDs: {sorted(audit_ids)}")
+
     (EVAL_OUT / "alpaca_lite_judgments.json").write_text(
         json.dumps(judgments, ensure_ascii=False, indent=2)
     )
-else:
-    print("⚠ No API key set, skipping AlpacaEval-lite. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.")
-    alpaca_winrate = None
 
 # %% [markdown]
 # ## 6. Aggregate + 4-bar comparison plot

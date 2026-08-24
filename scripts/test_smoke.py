@@ -54,3 +54,21 @@ def test_trainer_uses_processing_class_not_tokenizer():
         f"{offenders} still pass tokenizer=tokenizer to a TRL trainer; "
         f"use processing_class=tokenizer (tokenizer= removed in trl>=0.13)."
     )
+
+
+def test_gguf_export_loads_final_dpo_adapter():
+    notebook = (REPO / "notebooks/05_merge_deploy_gguf.py").read_text(encoding="utf-8")
+    cli = (REPO / "scripts/merge_and_gguf.py").read_text(encoding="utf-8")
+    assert "PeftModel.from_pretrained(model, str(DPO_PATH))" in notebook
+    assert "PeftModel.from_pretrained(model, args.dpo_path)" in cli
+    assert "PeftModel.from_pretrained(model, str(SFT_PATH))" not in notebook
+
+
+def test_colab_run_order_and_no_embedded_secret():
+    for path in (REPO / "colab").glob("*.ipynb"):
+        text = path.read_text(encoding="utf-8")
+        assert text.index("notebooks/04_compare_and_eval.py") < text.index("Bonus — β-sweep")
+        assert text.index("Bonus — β-sweep") < text.index("notebooks/06_benchmark.py")
+        assert text.index("notebooks/06_benchmark.py") < text.index("notebooks/05_merge_deploy_gguf.py")
+        assert "userdata.get('XAH_API_KEY')" in text
+        assert "Authorization: Bearer sk-" not in text

@@ -12,8 +12,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
+
+if hasattr(sys.stdout, "reconfigure"):
+    # Windows cp1252 consoles cannot encode the checkmark/info glyphs below.
+    sys.stdout.reconfigure(errors="backslashreplace")
 
 TEMPLATE_MARKERS = [
     r"<Họ Tên>",
@@ -107,6 +112,146 @@ def check_gguf(repo: Path, problems: list[str]) -> bool:
     return True
 
 
+def check_manual_judgments(repo: Path, problems: list[str]) -> bool:
+    path = repo / "data" / "eval" / "judge_results.json"
+    if not path.exists():
+        return False
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        problems.append(f"CORRUPT  data/eval/judge_results.json — {exc}")
+        return False
+    valid = {"sft", "dpo", "tie"}
+    unfinished = [
+        row.get("id") for row in rows
+        if row.get("winner_manual") not in valid
+        or not str(row.get("manual_reason", "")).strip()
+        or "TODO" in str(row.get("manual_reason", ""))
+    ]
+    if len(rows) != 8 or unfinished:
+        problems.append(
+            f"MANUAL  NB4 needs 8 completed manual judgments; unfinished IDs: {unfinished}"
+        )
+        return False
+    return True
+
+
+def check_full_bonus(repo: Path, problems: list[str]) -> None:
+    if list((repo / "gguf").glob("*.gguf")):
+        check_gguf(repo, problems)
+    else:
+        # Code-only submissions intentionally keep the multi-GB file in Drive.
+        # Require machine-readable metadata plus the smoke screenshot instead.
+        meta_path = repo / "data" / "eval" / "deploy_meta.json"
+        smoke_path = repo / "submission" / "screenshots" / "06-gguf-smoke.png"
+        if not meta_path.exists() or not smoke_path.exists():
+            problems.append(
+                "MISSING  GGUF file, or code-only evidence pair "
+                "data/eval/deploy_meta.json + 06-gguf-smoke.png"
+            )
+        else:
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                size_mb = float(meta.get("gguf_size_mb", 0))
+                if not meta.get("smoke_response") or not 0 < size_mb < 5 * 1024:
+                    problems.append("INVALID  code-only GGUF metadata (size/smoke response)")
+            except Exception as exc:
+                problems.append(f"CORRUPT  data/eval/deploy_meta.json — {exc}")
+    check_file(
+        repo / "data" / "eval" / "benchmark_results.json",
+        "NB6 benchmark results",
+        problems,
+    )
+
+    beta_path = repo / "data" / "eval" / "beta_sweep_results.json"
+    if check_file(beta_path, "beta-sweep results", problems):
+        try:
+            payload = json.loads(beta_path.read_text(encoding="utf-8"))
+            runs = payload.get("runs", [])
+            betas = {float(row["beta"]) for row in runs}
+            missing_rates = [row.get("beta") for row in runs if row.get("win_rate") is None]
+            unfinished = [
+                (row.get("beta"), judgment.get("id"))
+                for row in runs
+                for judgment in row.get("judgments", [])
+                if judgment.get("manual_audit")
+                and (
+                    judgment.get("winner_manual") not in {"sft", "dpo", "tie"}
+                    or "TODO" in str(judgment.get("manual_reason", ""))
+                )
+            ]
+            if not {0.05, 0.1, 0.5}.issubset(betas):
+                problems.append(f"BETA     expected 0.05/0.1/0.5, found {sorted(betas)}")
+            if missing_rates:
+                problems.append(f"BETA     missing judge win-rate for beta: {missing_rates}")
+            if unfinished:
+                problems.append(f"BETA     unfinished manual audit rows: {unfinished}")
+        except Exception as exc:
+            problems.append(f"CORRUPT  beta_sweep_results.json — {exc}")
+
+    alpaca_path = repo / "data" / "eval" / "alpaca_lite_judgments.json"
+    if check_file(alpaca_path, "NB6 AlpacaEval-lite judgments", problems):
+        try:
+            judgments = json.loads(alpaca_path.read_text(encoding="utf-8"))
+            audited = [j for j in judgments if "winner_manual" in j]
+            incomplete = [
+                j.get("id") for j in audited
+                if j.get("winner_manual") not in {"sft", "dpo", "tie"}
+                or "TODO" in str(j.get("manual_reason", ""))
+            ]
+            if len(audited) != 10 or incomplete:
+                problems.append(
+                    f"AUDIT    NB6 needs 10 manual audit rows; have {len(audited)}, incomplete {incomplete}"
+                )
+        except Exception as exc:
+            problems.append(f"CORRUPT  alpaca_lite_judgments.json — {exc}")
+
+    expected_shots = {
+        "01-setup-gpu.png",
+        "02-sft-loss.png",
+        "03-dpo-reward-curves.png",
+        "04-side-by-side-table.png",
+        "05-judge-output.png",
+        "06-gguf-smoke.png",
+        "07-benchmark-comparison.png",
+        "bonus-beta-sweep.png",
+    }
+    shot_dir = repo / "submission" / "screenshots"
+    existing = {p.name for p in shot_dir.iterdir()} if shot_dir.exists() else set()
+    missing = sorted(expected_shots - existing)
+    if missing:
+        problems.append(f"SHOTS    missing full-submission screenshots: {missing}")
+
+
+def check_secrets(repo: Path, problems: list[str]) -> None:
+    """Scan tracked text files without ever echoing a matching secret value."""
+    try:
+        output = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            cwd=repo, capture_output=True, check=True,
+        ).stdout
+        tracked = [repo / p.decode("utf-8") for p in output.split(b"\0") if p]
+    except Exception:
+        tracked = [p for p in repo.rglob("*") if p.is_file() and ".git" not in p.parts]
+
+    patterns = [
+        re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+        re.compile(r"Authorization[\"']?\s*:\s*[\"']Bearer\s+[A-Za-z0-9_-]{20,}", re.I),
+    ]
+    hits = []
+    for path in tracked:
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gguf", ".parquet"}:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if any(pattern.search(text) for pattern in patterns):
+            hits.append(str(path.relative_to(repo)))
+    if hits:
+        problems.append(f"SECRET   possible credential in tracked files: {sorted(hits)}")
+
+
 def smoke_check(repo: Path) -> int:
     """Light-weight pre-training check: imports work, GPU visible, deck files present."""
     print("==> Smoke check (imports + GPU + deck files)\n")
@@ -174,6 +319,10 @@ def main() -> int:
         "--smoke", action="store_true",
         help="Run pre-training smoke check (imports + GPU) instead of submission gatekeeper",
     )
+    parser.add_argument(
+        "--full", action="store_true",
+        help="Require NB5 + NB6 + beta-sweep, manual audits, 8 screenshots, and secret scan",
+    )
     args = parser.parse_args()
 
     repo = Path(__file__).resolve().parent.parent
@@ -221,22 +370,27 @@ def main() -> int:
     if n_shots:
         print(f"  ✓ submission/screenshots/ has {n_shots} image(s)")
 
-    if optional:
+    if args.full:
+        check_manual_judgments(repo, problems)
+        check_full_bonus(repo, problems)
+        check_secrets(repo, problems)
+
+    if optional and not args.full:
         print("\nⓘ Optional (bonus) not done — fine for a core pass:")
         for line in optional:
             print(f"  - {line}")
 
     print()
     if not problems:
-        print("✓ Core checks passed. Push your repo (public!) and paste the URL into LMS.")
+        label = "Full core +20 checks" if args.full else "Core checks"
+        print(f"✓ {label} passed. Push your repo (public!) and paste the URL into LMS.")
         return 0
 
     print("✗ Submission not ready yet:\n")
     for line in problems:
         print(f"  - {line}")
-    print(
-        "\nFix the items above and rerun `make verify`. See rubric.md for full grading details."
-    )
+    target = "make verify-full" if args.full else "make verify"
+    print(f"\nFix the items above and rerun `{target}`. See rubric.md for full grading details.")
     return 1
 
 

@@ -37,13 +37,13 @@
 
 ---
 
-## 3. Reward curves analysis (≥ 100 words)
+## 3. Reward curves analysis (≥ 150 words)
 
 > **Paste `03_dpo_reward_curves.png` here** (or link to it in `submission/screenshots/`).
 
 _Interpret both `chosen_rewards` and `rejected_rewards` separately. Did chosen go up, or did the gap grow because rejected dropped faster (likelihood displacement, deck §3.4)? What does this tell you about whether DPO did what you wanted? Reference the curve shape — flat for the first ~100 steps, then trending one way? KL divergence to reference at end?_
 
-_Answer here. ≥ 100 words._
+_Answer here. ≥ 150 words._
 
 ---
 
@@ -64,7 +64,9 @@ _Answer here. ≥ 100 words._
 
 **Win/loss/tie summary:** _<e.g., SFT+DPO wins 5/8, ties 2/8, loses 1/8>_
 
-**Judge used:** _<gpt-4o-mini | claude-haiku-4-5 | manual rubric>_
+**Judge used:** _<XAH OpenAI-compatible custom judge (rouyea98/gpt-5.4) + manual validation>_
+
+**API/manual agreement:** _<e.g., 6/8 = 75%; explain disagreements instead of hiding them>_
 
 ---
 
@@ -79,6 +81,8 @@ _If you ran the β-sweep bonus (rigor add-on +6), describe the result:_
 | 0.5 | _<...>_ | _<...>_ | _<...>_ | |
 
 _Interpret: where's the sweet spot for your data? Why? Does it match the deck's §3.3 prediction?_
+
+_For the XAH run, manually audit prompt IDs 1, 5, and 8 for every β and disclose any disagreement. Do not describe the routed model as an official OpenAI model._
 
 _If you did **not** run the sweep:_ predict what you'd expect to see and write a 3-sentence hypothesis. (No points lost — but the muscle of forming a hypothesis is the value.)
 

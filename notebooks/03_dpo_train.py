@@ -294,19 +294,19 @@ print(f"Wrote metrics to {DPO_OUT / 'dpo_metrics.json'}")
 #
 # Now's the time for the **β experiment** if you want the +6 rigor add-on.
 #
-# `make beta-sweep` runs this notebook 3 times with `DPO_BETA ∈ {0.05, 0.1, 0.5}`
-# and saves to `adapters/dpo-b{0.05,0.1,0.5}/`. Plot the results yourself:
+# `make beta-sweep` reuses this β=0.1 core run, trains β ∈ {0.05, 0.5},
+# evaluates all three adapters on the 8 NB4 prompts, and saves the combined
+# reward-gap + judge win-rate plot to `submission/screenshots/bonus-beta-sweep.png`.
 #
 # ```python
 # import json
 # import matplotlib.pyplot as plt
 # from pathlib import Path
 #
-# results = []
-# for d in sorted((REPO_ROOT / "adapters").glob("dpo-b*")):
-#     m = json.loads((d / "dpo_metrics.json").read_text())
-#     results.append((m["beta"], m["end_reward_gap"]))
-# # plot β vs reward_gap
+# results = json.loads(
+#     (REPO_ROOT / "data" / "eval" / "beta_sweep_results.json").read_text()
+# )["runs"]
+# # compare row["reward_gap"] and row["win_rate"] for each beta
 # ```
 #
 # **Think-hard zone:** what's the *expected* shape of the β-vs-reward-gap curve?

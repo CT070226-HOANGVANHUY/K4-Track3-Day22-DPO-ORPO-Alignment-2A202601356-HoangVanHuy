@@ -32,8 +32,8 @@ lm-eval[ifeval,math]>=0.4.5,<1.0
 jupyterlab>=4.3,<5.0
 jupytext>=1.16,<2.0
 
-# ── Optional API judges (notebook 04) — pulled if you set API keys ──
-openai>=1.55,<2.0                       # gpt-4o-mini judge
+# ── Optional API judges (NB4/NB6/beta-sweep) ─────────────────
+openai>=1.55,<2.0                       # official OpenAI or XAH-compatible client
 anthropic>=0.40,<1.0                    # claude-haiku judge
 
 # ── Test ──────────────────────────────────────────────────────

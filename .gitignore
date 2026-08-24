@@ -18,7 +18,9 @@ data/pref/
 data/eval_prompts.json
 adapters/sft-mini/
 adapters/dpo/
+adapters/dpo-b*/
 adapters/orpo/
+adapters/merged-fp16/
 gguf/
 *.gguf
 runs/

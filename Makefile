@@ -74,11 +74,13 @@ pipeline-full: sft data dpo eval deploy bench ## Core + OPTIONAL NB5 (GGUF) + NB
 # Bonus rigor add-on (+6 pts)
 # ─────────────────────────────────────────────────────────────
 
-beta-sweep: ## Re-run NB3 with beta in {0.05, 0.1, 0.5}
+beta-sweep: ## Train beta 0.05/0.5; reuse core beta 0.1; plot gap + judge win-rate
 	@$(PY) scripts/train_dpo.py --beta 0.05 --output-dir adapters/dpo-b0.05
-	@$(PY) scripts/train_dpo.py --beta 0.1  --output-dir adapters/dpo-b0.10
 	@$(PY) scripts/train_dpo.py --beta 0.5  --output-dir adapters/dpo-b0.50
-	@$(PY) scripts/eval_judge.py --sweep-dir adapters --output submission/screenshots/bonus-beta-sweep.png
+	@$(PY) scripts/eval_judge.py --sweep-dir adapters \
+		--sft-path adapters/sft-mini \
+		--results-output data/eval/beta_sweep_results.json \
+		--output submission/screenshots/bonus-beta-sweep.png
 
 # ─────────────────────────────────────────────────────────────
 # Verify + clean
@@ -86,6 +88,9 @@ beta-sweep: ## Re-run NB3 with beta in {0.05, 0.1, 0.5}
 
 verify: ## Pre-submission gatekeeper — checks artifacts + REFLECTION edited
 	@$(PY) scripts/verify.py
+
+verify-full: ## Core + NB5 + NB6 + beta-sweep + manual audits + secret scan
+	@$(PY) scripts/verify.py --full
 
 lab: ## Open Jupyter Lab (laptop only)
 	@$(JUPYTEXT) --to notebook --update notebooks/*.py 2>/dev/null || true
@@ -103,4 +108,4 @@ clean: ## Wipe adapters/, data/pref/, gguf/, __pycache__
 clean-all: clean ## Wipe everything including venv + HF cache
 	rm -rf $(VENV) ~/.cache/huggingface/hub
 
-.PHONY: help setup smoke sft data dpo eval deploy bench pipeline pipeline-full beta-sweep verify lab test clean clean-all
+.PHONY: help setup smoke sft data dpo eval deploy bench pipeline pipeline-full beta-sweep verify verify-full lab test clean clean-all
