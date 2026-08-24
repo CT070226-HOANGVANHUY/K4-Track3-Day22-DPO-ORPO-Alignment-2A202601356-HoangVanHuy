@@ -1,12 +1,26 @@
 ## Day 22 — DPO/ORPO Alignment lab.
 ## Tier-aware via COMPUTE_TIER (T4 default, BIGGPU optional).
 
+# Load user-selected settings for every Python/Jupyter subprocess. `strip` is
+# required because .env.example uses aligned inline comments after values.
+ifneq ($(wildcard .env),)
+  include .env
+  ENV_VARS := COMPUTE_TIER BASE_MODEL SFT_DATASET PREF_DATASET PREF_SLICE \
+              DPO_BETA DPO_LR DPO_EPOCHS JUDGE_PROVIDER JUDGE_BASE_URL JUDGE_MODEL \
+              XAH_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY HF_TOKEN HF_REPO \
+              WANDB_API_KEY WANDB_PROJECT
+  $(foreach var,$(ENV_VARS),$(eval $(var) := $(strip $($(var)))))
+  # Export only populated values, so optional overrides retain their Python defaults.
+  export $(foreach var,$(ENV_VARS),$(if $($(var)),$(var)))
+endif
+
 VENV     := .venv
 PY       := $(VENV)/bin/python
 PIP      := $(VENV)/bin/pip
 JUPYTEXT := $(VENV)/bin/jupytext
 PYTEST   := $(VENV)/bin/pytest
 JUPYTER  := $(VENV)/bin/jupyter
+RUFF     := $(VENV)/bin/ruff
 
 # If running on Colab there's no venv — fall back to system python.
 ifeq ($(wildcard $(PY)),)
@@ -15,6 +29,7 @@ ifeq ($(wildcard $(PY)),)
   JUPYTEXT := jupytext
   PYTEST := pytest
   JUPYTER := jupyter
+  RUFF := ruff
 endif
 
 .DEFAULT_GOAL := help
@@ -34,7 +49,7 @@ setup: ## Auto-detect Colab vs laptop, install deps + smoke check
 	  bash setup-laptop.sh; \
 	fi
 
-smoke: ## 2-step training run on each notebook to verify imports + GPU
+smoke: ## Verify imports, GPU visibility, dependencies, and notebook sources
 	@$(JUPYTEXT) --to notebook --update notebooks/*.py 2>/dev/null || true
 	@$(PY) scripts/verify.py --smoke
 
@@ -96,7 +111,10 @@ lab: ## Open Jupyter Lab (laptop only)
 	@$(JUPYTEXT) --to notebook --update notebooks/*.py 2>/dev/null || true
 	@$(JUPYTER) lab --notebook-dir=notebooks --ServerApp.token='' --no-browser
 
-test: ## Run pytest (smoke tests only — no full training)
+lint: ## Run static checks on Python and Jupytext sources
+	@$(RUFF) check .
+
+test: lint ## Run lint + pytest (smoke tests only — no full training)
 	@$(PYTEST) -q scripts/
 
 clean: ## Wipe adapters/, data/pref/, gguf/, __pycache__
@@ -108,4 +126,4 @@ clean: ## Wipe adapters/, data/pref/, gguf/, __pycache__
 clean-all: clean ## Wipe everything including venv + HF cache
 	rm -rf $(VENV) ~/.cache/huggingface/hub
 
-.PHONY: help setup smoke sft data dpo eval deploy bench pipeline pipeline-full beta-sweep verify verify-full lab test clean clean-all
+.PHONY: help setup smoke sft data dpo eval deploy bench pipeline pipeline-full beta-sweep verify verify-full lab lint test clean clean-all

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import subprocess
 import sys
@@ -28,6 +29,15 @@ TEMPLATE_MARKERS = [
     r"_Answer here\._?\s*$",
     r"<e\.g\., Free Colab T4 16GB",
 ]
+
+ARTIFACT_ERRORS = (
+    OSError,
+    UnicodeError,
+    TypeError,
+    ValueError,
+    KeyError,
+    AttributeError,
+)
 
 
 def check_file(path: Path, label: str, problems: list[str]) -> bool:
@@ -78,11 +88,15 @@ def check_dpo_metrics(repo: Path, problems: list[str]) -> bool:
         problems.append("MISSING  adapters/dpo/dpo_metrics.json (NB3 didn't complete)")
         return False
     try:
-        m = json.loads(metrics_path.read_text())
-    except Exception as exc:
+        m = json.loads(metrics_path.read_text(encoding="utf-8"))
+        gap = m.get("end_reward_gap")
+        if gap is not None:
+            gap = float(gap)
+            if not math.isfinite(gap):
+                raise ValueError("end_reward_gap must be finite")
+    except ARTIFACT_ERRORS as exc:
         problems.append(f"CORRUPT  adapters/dpo/dpo_metrics.json — {exc}")
         return False
-    gap = m.get("end_reward_gap")
     if gap is None:
         problems.append("WARN     adapters/dpo/dpo_metrics.json has no end_reward_gap (TRL log columns missing?)")
         return True
@@ -118,16 +132,16 @@ def check_manual_judgments(repo: Path, problems: list[str]) -> bool:
         return False
     try:
         rows = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
+        valid = {"sft", "dpo", "tie"}
+        unfinished = [
+            row.get("id") for row in rows
+            if row.get("winner_manual") not in valid
+            or not str(row.get("manual_reason", "")).strip()
+            or "TODO" in str(row.get("manual_reason", ""))
+        ]
+    except ARTIFACT_ERRORS as exc:
         problems.append(f"CORRUPT  data/eval/judge_results.json — {exc}")
         return False
-    valid = {"sft", "dpo", "tie"}
-    unfinished = [
-        row.get("id") for row in rows
-        if row.get("winner_manual") not in valid
-        or not str(row.get("manual_reason", "")).strip()
-        or "TODO" in str(row.get("manual_reason", ""))
-    ]
     if len(rows) != 8 or unfinished:
         problems.append(
             f"MANUAL  NB4 needs 8 completed manual judgments; unfinished IDs: {unfinished}"
@@ -155,7 +169,7 @@ def check_full_bonus(repo: Path, problems: list[str]) -> None:
                 size_mb = float(meta.get("gguf_size_mb", 0))
                 if not meta.get("smoke_response") or not 0 < size_mb < 5 * 1024:
                     problems.append("INVALID  code-only GGUF metadata (size/smoke response)")
-            except Exception as exc:
+            except ARTIFACT_ERRORS as exc:
                 problems.append(f"CORRUPT  data/eval/deploy_meta.json — {exc}")
     check_file(
         repo / "data" / "eval" / "benchmark_results.json",
@@ -186,7 +200,7 @@ def check_full_bonus(repo: Path, problems: list[str]) -> None:
                 problems.append(f"BETA     missing judge win-rate for beta: {missing_rates}")
             if unfinished:
                 problems.append(f"BETA     unfinished manual audit rows: {unfinished}")
-        except Exception as exc:
+        except ARTIFACT_ERRORS as exc:
             problems.append(f"CORRUPT  beta_sweep_results.json — {exc}")
 
     alpaca_path = repo / "data" / "eval" / "alpaca_lite_judgments.json"
@@ -203,7 +217,7 @@ def check_full_bonus(repo: Path, problems: list[str]) -> None:
                 problems.append(
                     f"AUDIT    NB6 needs 10 manual audit rows; have {len(audited)}, incomplete {incomplete}"
                 )
-        except Exception as exc:
+        except ARTIFACT_ERRORS as exc:
             problems.append(f"CORRUPT  alpaca_lite_judgments.json — {exc}")
 
     expected_shots = {
@@ -231,12 +245,12 @@ def check_secrets(repo: Path, problems: list[str]) -> None:
             cwd=repo, capture_output=True, check=True,
         ).stdout
         tracked = [repo / p.decode("utf-8") for p in output.split(b"\0") if p]
-    except Exception:
+    except (OSError, subprocess.SubprocessError, UnicodeError):
         tracked = [p for p in repo.rglob("*") if p.is_file() and ".git" not in p.parts]
 
     patterns = [
         re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
-        re.compile(r"Authorization[\"']?\s*:\s*[\"']Bearer\s+[A-Za-z0-9_-]{20,}", re.I),
+        re.compile(r"Authorization[\"']?\s*:\s*[\"']Bearer\s+[A-Za-z0-9_-]{20,}", re.IGNORECASE),
     ]
     hits = []
     for path in tracked:
@@ -299,7 +313,7 @@ def smoke_check(repo: Path) -> int:
     # NB6 benchmark dependency check
     try:
         import lm_eval  # noqa: F401
-        print(f"  ✓ lm_eval (NB6 benchmark suite)")
+        print("  ✓ lm_eval (NB6 benchmark suite)")
     except ImportError:
         problems.append("lm_eval missing — pip install -r requirements.txt (NB6 will fail)")
 

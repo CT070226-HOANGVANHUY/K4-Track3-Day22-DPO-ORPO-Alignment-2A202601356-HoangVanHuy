@@ -14,7 +14,6 @@ import argparse
 import os
 from pathlib import Path
 
-import numpy as np
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
@@ -38,7 +37,12 @@ def main():
     args = parser.parse_args()
 
     tier = os.environ.get("COMPUTE_TIER", "T4").upper()
-    pref_slice = args.slice or (2000 if tier == "T4" else 5000)
+    if tier not in {"T4", "BIGGPU"}:
+        raise ValueError(f"Invalid COMPUTE_TIER: {tier}")
+    default_slice = int(os.environ.get("PREF_SLICE", "2000" if tier == "T4" else "5000"))
+    pref_slice = args.slice if args.slice is not None else default_slice
+    if pref_slice < 1:
+        parser.error("--slice/PREF_SLICE must be at least 1")
 
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)

@@ -95,8 +95,9 @@ cat <<EOF
 [laptop] Done. Activate the venv and start working:
 
     source .venv/bin/activate
-    make smoke           # 2-step training run on each notebook to verify
-    make pipeline        # full pipeline: sft → data → dpo → eval → deploy
+    make smoke           # import + GPU + dependency check (no training)
+    make pipeline        # core pipeline: sft → data → dpo → eval
+    make pipeline-full   # optional deploy + benchmark stages too
 
 Tip: read VIBE-CODING.md before starting NB1 — 5-10 min, tells you which
 subtasks to delegate to AI and which to think through yourself.

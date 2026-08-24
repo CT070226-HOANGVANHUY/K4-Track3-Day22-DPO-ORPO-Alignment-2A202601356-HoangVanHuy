@@ -18,14 +18,13 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from scripts.judge_client import (  # noqa: E402
+from scripts.judge_client import (
     JudgeError,
     build_client,
     config_from_env,
     request_judgment,
     run_preflight,
 )
-
 
 EVAL_PROMPTS = [
     {"id": 1, "category": "helpfulness", "prompt": "Giải thích ngắn gọn (5-7 câu) cách thuật toán quicksort hoạt động."},
@@ -83,7 +82,14 @@ def generate_with_adapter(adapter_path: Path, prompts: list[dict]) -> list[str]:
     from unsloth import FastLanguageModel
 
     tier = os.environ.get("COMPUTE_TIER", "T4").upper()
-    base = "unsloth/Qwen2.5-3B-bnb-4bit" if tier == "T4" else "unsloth/Qwen2.5-7B-bnb-4bit"
+    if tier not in {"T4", "BIGGPU"}:
+        raise ValueError(f"Invalid COMPUTE_TIER: {tier}")
+    default_base = (
+        "unsloth/Qwen2.5-3B-bnb-4bit"
+        if tier == "T4"
+        else "unsloth/Qwen2.5-7B-bnb-4bit"
+    )
+    base = os.environ.get("BASE_MODEL", default_base)
     max_len = 512 if tier == "T4" else 1024
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=base, max_seq_length=max_len, dtype=None, load_in_4bit=True,
@@ -119,7 +125,9 @@ def generate_with_adapter(adapter_path: Path, prompts: list[dict]) -> list[str]:
 def evaluate_rows(rows: list[dict], sft_path: Path) -> tuple[list[dict], str]:
     config = config_from_env()
     if config is None:
-        raise RuntimeError("Set JUDGE_PROVIDER=xah and XAH_API_KEY before beta-sweep evaluation")
+        raise RuntimeError(
+            "Configure XAH, OpenAI, or Anthropic credentials before beta-sweep evaluation"
+        )
     client = build_client(config)
     print(f"Judge: {config.label} (secret not displayed)")
     for check in run_preflight(config, client=client):

@@ -24,19 +24,22 @@ import os
 from pathlib import Path
 
 COMPUTE_TIER = os.environ.get("COMPUTE_TIER", "T4").upper()
+assert COMPUTE_TIER in ("T4", "BIGGPU"), f"Invalid COMPUTE_TIER: {COMPUTE_TIER}"
 
 if COMPUTE_TIER == "T4":
-    BASE_MODEL = "unsloth/Qwen2.5-3B-bnb-4bit"
+    DEFAULT_BASE_MODEL = "unsloth/Qwen2.5-3B-bnb-4bit"
     MAX_LEN = 512
     MAX_PROMPT_LEN = 256
     PER_DEVICE_BATCH = 1
     GRAD_ACCUM = 8
 else:
-    BASE_MODEL = "unsloth/Qwen2.5-7B-bnb-4bit"
+    DEFAULT_BASE_MODEL = "unsloth/Qwen2.5-7B-bnb-4bit"
     MAX_LEN = 1024
     MAX_PROMPT_LEN = 512
     PER_DEVICE_BATCH = 1
     GRAD_ACCUM = 4
+
+BASE_MODEL = os.environ.get("BASE_MODEL", DEFAULT_BASE_MODEL)
 
 # Hyperparameters from deck §5.2 (TRL DPOTrainer implementation frame)
 BETA = float(os.environ.get("DPO_BETA", "0.1"))
@@ -76,8 +79,8 @@ assert torch.cuda.is_available(), "DPO needs a CUDA GPU. See HARDWARE-GUIDE.md."
 # sequences, not from a second copy of the weights.
 
 # %%
-from unsloth import FastLanguageModel
 from peft import PeftModel
+from unsloth import FastLanguageModel
 
 # Policy — gets new DPO LoRA adapter on top of SFT LoRA
 model, tokenizer = FastLanguageModel.from_pretrained(

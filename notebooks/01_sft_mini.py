@@ -31,15 +31,17 @@ assert COMPUTE_TIER in ("T4", "BIGGPU"), f"Invalid COMPUTE_TIER: {COMPUTE_TIER}"
 
 # Tier-specific hyperparameters
 if COMPUTE_TIER == "T4":
-    BASE_MODEL = "unsloth/Qwen2.5-3B-bnb-4bit"
+    DEFAULT_BASE_MODEL = "unsloth/Qwen2.5-3B-bnb-4bit"
     MAX_LEN = 512
     PER_DEVICE_BATCH = 1
     GRAD_ACCUM = 8
 else:  # BIGGPU
-    BASE_MODEL = "unsloth/Qwen2.5-7B-bnb-4bit"
+    DEFAULT_BASE_MODEL = "unsloth/Qwen2.5-7B-bnb-4bit"
     MAX_LEN = 1024
     PER_DEVICE_BATCH = 2
     GRAD_ACCUM = 4
+
+BASE_MODEL = os.environ.get("BASE_MODEL", DEFAULT_BASE_MODEL)
 
 SFT_DATASET = os.environ.get(
     "SFT_DATASET", "5CD-AI/Vietnamese-alpaca-gpt4-gg-translated"
@@ -146,7 +148,7 @@ print(f"\nSample formatted text (first 500 chars):\n{ds_formatted[0]['text'][:50
 # ## 3. Train SFT-mini
 
 # %%
-from trl import SFTTrainer, SFTConfig
+from trl import SFTConfig, SFTTrainer
 
 sft_config = SFTConfig(
     output_dir=str(ADAPTER_OUT.parent / "sft-mini-checkpoints"),

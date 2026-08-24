@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -38,6 +40,14 @@ def test_colab_notebooks_are_valid_json():
         json.loads(p.read_text(encoding="utf-8"))  # ValueError if corrupt
 
 
+def test_colab_notebooks_match_sources():
+    subprocess.run(
+        [sys.executable, str(REPO / "scripts" / "build_colab.py"), "--check"],
+        cwd=REPO,
+        check=True,
+    )
+
+
 def test_sft_uses_available_vietnamese_alpaca_dataset_and_columns():
     notebook = (REPO / "notebooks/01_sft_mini.py").read_text(encoding="utf-8")
     assert "5CD-AI/Vietnamese-alpaca-gpt4-gg-translated" in notebook
@@ -45,6 +55,26 @@ def test_sft_uses_available_vietnamese_alpaca_dataset_and_columns():
     assert 'row.get("input_vi")' in notebook
     assert 'row.get("output_vi")' in notebook
     assert "5CD-AI/Vietnamese-alpaca-cleaned" not in notebook
+
+
+def test_documented_environment_overrides_are_wired_into_sources():
+    notebook_sources = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in (REPO / "notebooks").glob("*.py")
+    }
+    model_consumers = {
+        "01_sft_mini.py",
+        "03_dpo_train.py",
+        "04_compare_and_eval.py",
+        "05_merge_deploy_gguf.py",
+        "06_benchmark.py",
+    }
+    for name in model_consumers:
+        assert 'os.environ.get("BASE_MODEL"' in notebook_sources[name]
+
+    preference_source = notebook_sources["02_preference_data.py"]
+    assert 'os.environ.get("PREF_SLICE"' in preference_source
+    assert "DEFAULT_PREF_SLICE = 2000" in preference_source
 
 
 def test_trainer_uses_processing_class_not_tokenizer():

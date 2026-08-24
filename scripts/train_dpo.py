@@ -21,23 +21,26 @@ REPO = Path(__file__).resolve().parent.parent
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--beta", type=float, default=0.1)
-    parser.add_argument("--lr", type=float, default=5e-7)
-    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--beta", type=float, default=float(os.environ.get("DPO_BETA", "0.1")))
+    parser.add_argument("--lr", type=float, default=float(os.environ.get("DPO_LR", "5e-7")))
+    parser.add_argument("--epochs", type=int, default=int(os.environ.get("DPO_EPOCHS", "1")))
     parser.add_argument("--sft-path", default=str(REPO / "adapters" / "sft-mini"))
     parser.add_argument("--pref-path", default=str(REPO / "data" / "pref" / "train.parquet"))
     parser.add_argument("--output-dir", default=str(REPO / "adapters" / "dpo"))
     args = parser.parse_args()
 
     tier = os.environ.get("COMPUTE_TIER", "T4").upper()
+    if tier not in {"T4", "BIGGPU"}:
+        parser.error(f"Invalid COMPUTE_TIER: {tier}")
     if tier == "T4":
-        base_model = "unsloth/Qwen2.5-3B-bnb-4bit"
+        default_base_model = "unsloth/Qwen2.5-3B-bnb-4bit"
         max_len, max_prompt = 512, 256
         batch, grad_accum = 1, 8
     else:
-        base_model = "unsloth/Qwen2.5-7B-bnb-4bit"
+        default_base_model = "unsloth/Qwen2.5-7B-bnb-4bit"
         max_len, max_prompt = 1024, 512
         batch, grad_accum = 1, 4
+    base_model = os.environ.get("BASE_MODEL", default_base_model)
 
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)

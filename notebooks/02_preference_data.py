@@ -27,15 +27,20 @@ import os
 from pathlib import Path
 
 COMPUTE_TIER = os.environ.get("COMPUTE_TIER", "T4").upper()
+assert COMPUTE_TIER in ("T4", "BIGGPU"), f"Invalid COMPUTE_TIER: {COMPUTE_TIER}"
 
 if COMPUTE_TIER == "T4":
-    PREF_SLICE = 1000
+    DEFAULT_PREF_SLICE = 2000
     MAX_LEN = 512
     MAX_PROMPT_LEN = 256
 else:
-    PREF_SLICE = 5000
+    DEFAULT_PREF_SLICE = 5000
     MAX_LEN = 1024
     MAX_PROMPT_LEN = 512
+
+PREF_SLICE = int(os.environ.get("PREF_SLICE", str(DEFAULT_PREF_SLICE)))
+if PREF_SLICE < 1:
+    raise ValueError("PREF_SLICE must be at least 1")
 
 PREF_DATASET = os.environ.get(
     "PREF_DATASET", "argilla/ultrafeedback-binarized-preferences-cleaned"

@@ -22,15 +22,17 @@
 # ## 0. Setup
 
 # %%
-import os
 import json
+import os
 from pathlib import Path
 
 COMPUTE_TIER = os.environ.get("COMPUTE_TIER", "T4").upper()
-BASE_MODEL = (
+assert COMPUTE_TIER in ("T4", "BIGGPU"), f"Invalid COMPUTE_TIER: {COMPUTE_TIER}"
+DEFAULT_BASE_MODEL = (
     "unsloth/Qwen2.5-3B-bnb-4bit" if COMPUTE_TIER == "T4"
     else "unsloth/Qwen2.5-7B-bnb-4bit"
 )
+BASE_MODEL = os.environ.get("BASE_MODEL", DEFAULT_BASE_MODEL)
 MAX_LEN = 512 if COMPUTE_TIER == "T4" else 1024
 
 REPO_ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
@@ -56,8 +58,8 @@ assert torch.cuda.is_available()
 # ## 1. Load DPO model + merge adapter
 
 # %%
-from unsloth import FastLanguageModel
 from peft import PeftModel
+from unsloth import FastLanguageModel
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=BASE_MODEL,

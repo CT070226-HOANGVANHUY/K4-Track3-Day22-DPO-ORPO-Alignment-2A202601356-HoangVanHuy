@@ -18,18 +18,21 @@
 # ## 0. Setup + 8 fixed prompts
 
 # %%
-import os
 import json
+import os
 from pathlib import Path
 
 COMPUTE_TIER = os.environ.get("COMPUTE_TIER", "T4").upper()
+assert COMPUTE_TIER in ("T4", "BIGGPU"), f"Invalid COMPUTE_TIER: {COMPUTE_TIER}"
 
 if COMPUTE_TIER == "T4":
-    BASE_MODEL = "unsloth/Qwen2.5-3B-bnb-4bit"
+    DEFAULT_BASE_MODEL = "unsloth/Qwen2.5-3B-bnb-4bit"
     MAX_LEN = 512
 else:
-    BASE_MODEL = "unsloth/Qwen2.5-7B-bnb-4bit"
+    DEFAULT_BASE_MODEL = "unsloth/Qwen2.5-7B-bnb-4bit"
     MAX_LEN = 1024
+
+BASE_MODEL = os.environ.get("BASE_MODEL", DEFAULT_BASE_MODEL)
 
 REPO_ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 SFT_PATH = REPO_ROOT / "adapters" / "sft-mini"
@@ -64,9 +67,10 @@ assert torch.cuda.is_available(), "Need GPU for generation"
 # ## 1. Helper — generate with a specified adapter
 
 # %%
-from unsloth import FastLanguageModel
-from peft import PeftModel
 import gc
+
+from peft import PeftModel
+from unsloth import FastLanguageModel
 
 
 def generate_with_adapter(adapter_path: Path, prompts: list[dict], max_new_tokens: int = 256):
@@ -127,8 +131,9 @@ print(f"Done — {len(dpo_outputs)} responses")
 # ## 4. Side-by-side table (deliverable: `04_side_by_side_table.png`)
 
 # %%
-import pandas as pd
 import textwrap
+
+import pandas as pd
 
 rows = []
 for p, sft_out, dpo_out in zip(EVAL_PROMPTS, sft_outputs, dpo_outputs):
@@ -206,8 +211,8 @@ plt.show()
 # ## 5. Custom API judge + required manual validation
 #
 # Set `JUDGE_PROVIDER=xah` and put `XAH_API_KEY` in Colab Secrets. The key is
-# read from the environment and is never printed or saved. Official OpenAI is
-# still supported with `JUDGE_PROVIDER=openai` + `OPENAI_API_KEY`.
+# read from the environment and is never printed or saved. Official OpenAI and
+# Anthropic are supported with `JUDGE_PROVIDER` plus the matching API key.
 
 # %%
 JUDGE_PROMPT_TEMPLATE = """Bạn là 1 alignment researcher đang chấm output Vietnamese chat cho helpfulness và safety.
@@ -233,7 +238,7 @@ import sys
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.judge_client import (  # noqa: E402
+from scripts.judge_client import (
     JudgeError,
     build_client,
     config_from_env,

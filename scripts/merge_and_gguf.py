@@ -30,10 +30,13 @@ def main():
     quants = args.quant or ["q4_k_m"]
 
     tier = os.environ.get("COMPUTE_TIER", "T4").upper()
-    base = (
+    if tier not in {"T4", "BIGGPU"}:
+        parser.error(f"Invalid COMPUTE_TIER: {tier}")
+    default_base = (
         "unsloth/Qwen2.5-3B-bnb-4bit" if tier == "T4"
         else "unsloth/Qwen2.5-7B-bnb-4bit"
     )
+    base = os.environ.get("BASE_MODEL", default_base)
     max_len = 512 if tier == "T4" else 1024
 
     Path(args.merged_output).mkdir(parents=True, exist_ok=True)
@@ -41,10 +44,11 @@ def main():
 
     print(f"Tier: {tier}  base: {base}  quants: {quants}")
 
+    import gc
+
+    import torch
     from peft import PeftModel
     from unsloth import FastLanguageModel
-    import gc
-    import torch
 
     # Step 1: load the final adapter saved by NB3. It already represents the
     # SFT-initialized model after DPO updates (and is what NB4 evaluates).

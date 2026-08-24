@@ -2,6 +2,7 @@
 """Regenerate the stitched T4/BigGPU Colab notebooks from Jupytext sources."""
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -175,7 +176,7 @@ def setup_cells(tier: str) -> list[dict]:
     ]
 
 
-def build(tier: str, destination: Path) -> None:
+def build(tier: str, destination: Path, *, check: bool = False) -> bool:
     cells = setup_cells(tier)
     stage_order = [
         "01_sft_mini.py",
@@ -234,14 +235,34 @@ def build(tier: str, destination: Path) -> None:
         "nbformat": 4,
         "nbformat_minor": 5,
     }
-    destination.write_text(json.dumps(notebook, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"Wrote {destination.relative_to(REPO)} ({len(cells)} cells)")
+    rendered = json.dumps(notebook, ensure_ascii=False, indent=1)
+    relative = destination.relative_to(REPO)
+    if check:
+        if not destination.exists() or destination.read_text(encoding="utf-8") != rendered:
+            print(f"STALE {relative}; run `python scripts/build_colab.py`")
+            return False
+        print(f"OK {relative} ({len(cells)} cells)")
+        return True
+
+    destination.write_text(rendered, encoding="utf-8")
+    print(f"Wrote {relative} ({len(cells)} cells)")
+    return True
 
 
-def main() -> None:
-    build("T4", REPO / "colab" / "Lab22_DPO_T4.ipynb")
-    build("BIGGPU", REPO / "colab" / "Lab22_DPO_BigGPU.ipynb")
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Fail if a generated Colab notebook is stale; do not write files",
+    )
+    args = parser.parse_args()
+    results = [
+        build("T4", REPO / "colab" / "Lab22_DPO_T4.ipynb", check=args.check),
+        build("BIGGPU", REPO / "colab" / "Lab22_DPO_BigGPU.ipynb", check=args.check),
+    ]
+    return 0 if all(results) else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -26,12 +26,14 @@
 # ## 0. Setup
 
 # %%
-import os
-import json
 import gc
+import json
+import math
+import os
 from pathlib import Path
 
 COMPUTE_TIER = os.environ.get("COMPUTE_TIER", "T4").upper()
+assert COMPUTE_TIER in ("T4", "BIGGPU"), f"Invalid COMPUTE_TIER: {COMPUTE_TIER}"
 
 if COMPUTE_TIER == "T4":
     LIMIT_IFEVAL = 540
@@ -45,6 +47,13 @@ else:
     LIMIT_MMLU = 5000
     LIMIT_ALPACA = 250
     BATCH_SIZE = 4
+
+DEFAULT_BASE_MODEL = (
+    "unsloth/Qwen2.5-3B-bnb-4bit"
+    if COMPUTE_TIER == "T4"
+    else "unsloth/Qwen2.5-7B-bnb-4bit"
+)
+BASE_MODEL = os.environ.get("BASE_MODEL", DEFAULT_BASE_MODEL)
 
 REPO_ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 SFT_PATH = REPO_ROOT / "adapters" / "sft-mini"
@@ -76,12 +85,11 @@ import subprocess
 
 def run_lm_eval(adapter_path, tasks, limit, num_fewshot, label):
     """Run lm-eval-harness with PEFT adapter on top of base, return parsed metrics."""
-    base = "unsloth/Qwen2.5-3B-bnb-4bit" if COMPUTE_TIER == "T4" else "unsloth/Qwen2.5-7B-bnb-4bit"
     out_dir = EVAL_OUT / f"lm-{label}-{tasks}"
     cmd = [
         "lm_eval",
         "--model", "hf",
-        "--model_args", f"pretrained={base},peft={adapter_path},load_in_4bit=True",
+        "--model_args", f"pretrained={BASE_MODEL},peft={adapter_path},load_in_4bit=True",
         "--tasks", tasks,
         "--num_fewshot", str(num_fewshot),
         "--limit", str(limit),
@@ -90,7 +98,12 @@ def run_lm_eval(adapter_path, tasks, limit, num_fewshot, label):
         "--output_path", str(out_dir),
     ]
     print(f"\n{'=' * 60}\nRunning lm-eval [{label}]: {tasks}\n{'=' * 60}")
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=2400)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=2400, check=False)
+
+    if proc.returncode != 0:
+        print(f"WARN: lm-eval exited with code {proc.returncode}. STDERR tail:")
+        print(proc.stderr[-1000:])
+        return {"error": f"lm_eval_exit_{proc.returncode}"}
 
     out_files = sorted(out_dir.glob("**/results*.json"))
     if not out_files:
@@ -158,7 +171,7 @@ torch.cuda.empty_cache()
 # Mini AlpacaEval 2 LC. 100 prompts, generate from both adapters, and judge through the
 # configured provider. XAH is reported as a custom OpenAI-compatible judge.
 #
-# Set `JUDGE_PROVIDER=xah` + `XAH_API_KEY`, or use official `OPENAI_API_KEY`.
+# Set `JUDGE_PROVIDER=xah` + `XAH_API_KEY`, or use official OpenAI/Anthropic credentials.
 
 # %%
 from datasets import load_dataset
@@ -170,7 +183,7 @@ def load_alpaca_lite_prompts(n):
         ds = load_dataset("tatsu-lab/alpaca_eval", "alpaca_eval",
                           split="eval", trust_remote_code=True)
         return [{"id": i, "prompt": ds[i]["instruction"]} for i in range(min(n, len(ds)))]
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any dataset/provider failure uses local fallback
         print(f"alpaca_eval dataset load failed ({exc}); using NB4 fallback")
         eval_path = EVAL_OUT / "prompts.json"
         if eval_path.exists():
@@ -185,14 +198,13 @@ print(f"Loaded {len(alpaca_prompts)} AlpacaEval-lite prompts")
 # %%
 def generate_with_adapter(adapter_path, prompts, max_new_tokens=256):
     """NB4 pattern: load base + adapter, generate, free memory."""
-    from unsloth import FastLanguageModel
     from peft import PeftModel
+    from unsloth import FastLanguageModel
 
-    base = "unsloth/Qwen2.5-3B-bnb-4bit" if COMPUTE_TIER == "T4" else "unsloth/Qwen2.5-7B-bnb-4bit"
     max_len = 512 if COMPUTE_TIER == "T4" else 1024
 
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=base, max_seq_length=max_len, dtype=None, load_in_4bit=True,
+        model_name=BASE_MODEL, max_seq_length=max_len, dtype=None, load_in_4bit=True,
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -235,7 +247,7 @@ import sys
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.judge_client import (  # noqa: E402
+from scripts.judge_client import (
     JudgeError,
     build_client,
     config_from_env,
@@ -270,7 +282,7 @@ import random
 if alpaca_prompts and judge_config:
     print(f">>> Generating SFT-only on {len(alpaca_prompts)} AlpacaEval-lite prompts")
     sft_outputs = generate_with_adapter(SFT_PATH, alpaca_prompts)
-    print(f">>> Generating SFT+DPO")
+    print(">>> Generating SFT+DPO")
     dpo_outputs = generate_with_adapter(DPO_PATH, alpaca_prompts)
 
     print(f">>> Judging {len(alpaca_prompts)} pairs (random A/B order)")
@@ -356,7 +368,7 @@ def extract_score(results, primary_metric):
     """Pull the primary metric from a lm-eval results dict."""
     if "error" in results:
         return float("nan")
-    for task_name, metrics_dict in results.items():
+    for metrics_dict in results.values():
         if primary_metric in metrics_dict:
             return float(metrics_dict[primary_metric])
         for k, v in metrics_dict.items():
@@ -389,7 +401,11 @@ print("\n" + "=" * 60)
 print("BENCHMARK RESULTS")
 print("=" * 60)
 for bench, scores in metrics.items():
-    delta = (scores["dpo"] - scores["sft"]) if all(s == s for s in scores.values()) else float("nan")
+    delta = (
+        scores["dpo"] - scores["sft"]
+        if all(math.isfinite(score) for score in scores.values())
+        else float("nan")
+    )
     arrow = "↑" if delta > 0 else "↓" if delta < 0 else "—"
     print(f"  {bench:18s}  SFT: {scores['sft']:.3f}   DPO: {scores['dpo']:.3f}   Δ: {delta:+.3f} {arrow}")
 
@@ -411,13 +427,13 @@ b2 = ax.bar(x + width / 2, dpo_scores, width, label="SFT+DPO", color="#c83538")
 for bars in [b1, b2]:
     for rect in bars:
         h = rect.get_height()
-        if h == h:
+        if math.isfinite(h):
             ax.text(rect.get_x() + rect.get_width() / 2, h + 0.005,
                     f"{h:.2f}", ha="center", va="bottom", fontsize=9)
 
 for i, b in enumerate(bench_names):
     s, d = metrics[b]["sft"], metrics[b]["dpo"]
-    if s == s and d == d:
+    if math.isfinite(s) and math.isfinite(d):
         delta = d - s
         color = "#2e548a" if delta > 0 else "#c83538" if delta < 0 else "#666"
         ax.annotate(f"Δ={delta:+.3f}", xy=(x[i], max(s, d) + 0.04),

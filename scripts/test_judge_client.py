@@ -8,12 +8,13 @@ import pytest
 from scripts.judge_client import (
     JudgeAuthError,
     JudgeConfig,
+    JudgeError,
     JudgeResponseError,
+    config_from_env,
     parse_judgment,
     request_judgment,
     run_preflight,
 )
-
 
 CONFIG = JudgeConfig(
     provider="xah",
@@ -47,6 +48,11 @@ def fake_client(*outcomes):
     return SimpleNamespace(chat=SimpleNamespace(completions=completions)), completions
 
 
+def fake_anthropic_client(*outcomes):
+    messages = FakeCompletions(outcomes)
+    return SimpleNamespace(messages=messages), messages
+
+
 def http_error(status):
     exc = RuntimeError(f"HTTP {status}")
     exc.status_code = status
@@ -71,6 +77,44 @@ def test_request_uses_structured_output():
     assert result["winner"] == "B"
     assert result["structured_output"] is True
     assert calls.calls[0]["response_format"] == {"type": "json_object"}
+
+
+def test_anthropic_uses_messages_api_without_openai_response_format():
+    config = JudgeConfig(
+        provider="anthropic",
+        model="claude-test",
+        api_key="test-only-not-a-real-key",
+    )
+    message = SimpleNamespace(
+        content=[SimpleNamespace(text='{"winner":"A","justification":"clearer"}')]
+    )
+    client, calls = fake_anthropic_client(message)
+
+    result = request_judgment("compare", config=config, client=client, sleep=lambda _: None)
+
+    assert result["winner"] == "A"
+    assert result["structured_output"] is False
+    assert calls.calls[0]["max_tokens"] == 512
+    assert "response_format" not in calls.calls[0]
+
+
+def test_anthropic_config_from_environment(monkeypatch):
+    monkeypatch.setenv("JUDGE_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.delenv("JUDGE_MODEL", raising=False)
+
+    config = config_from_env()
+
+    assert config is not None
+    assert config.provider == "anthropic"
+    assert config.model == "claude-3-5-haiku-20241022"
+    assert config.label.startswith("Anthropic")
+
+
+def test_unknown_provider_fails_loudly(monkeypatch):
+    monkeypatch.setenv("JUDGE_PROVIDER", "unknown")
+    with pytest.raises(JudgeError, match="Unsupported JUDGE_PROVIDER"):
+        config_from_env()
 
 
 def test_unsupported_response_format_falls_back():
